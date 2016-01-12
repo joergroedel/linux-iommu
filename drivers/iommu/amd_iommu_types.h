@@ -425,46 +425,6 @@ struct protection_domain {
 };
 
 /*
- * For dynamic growth the aperture size is split into ranges of 128MB of
- * DMA address space each. This struct represents one such range.
- */
-struct aperture_range {
-
-	/* address allocation bitmap */
-	unsigned long *bitmap;
-
-	/*
-	 * Array of PTE pages for the aperture. In this array we save all the
-	 * leaf pages of the domain page table used for the aperture. This way
-	 * we don't need to walk the page table to find a specific PTE. We can
-	 * just calculate its address in constant time.
-	 */
-	u64 *pte_pages[64];
-
-	unsigned long offset;
-};
-
-/*
- * Data container for a dma_ops specific protection domain
- */
-struct dma_ops_domain {
-	/* generic protection domain information */
-	struct protection_domain domain;
-
-	/* size of the aperture for the mappings */
-	unsigned long aperture_size;
-
-	/* address we start to search for free addresses */
-	unsigned long next_address;
-
-	/* address space relevant data */
-	struct aperture_range *aperture[APERTURE_MAX_RANGES];
-
-	/* This will be set to true when TLB needs to be flushed */
-	bool need_flush;
-};
-
-/*
  * Structure where we save information about one hardware AMD IOMMU in the
  * system.
  */
@@ -666,7 +626,7 @@ extern unsigned long *amd_iommu_pd_alloc_bitmap;
  * If true, the addresses will be flushed on unmap time, not when
  * they are reused
  */
-extern u32 amd_iommu_unmap_flush;
+extern bool amd_iommu_unmap_flush;
 
 /* Smallest max PASID supported by any IOMMU in the system */
 extern u32 amd_iommu_max_pasid;
