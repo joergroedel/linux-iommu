@@ -1673,7 +1673,7 @@ static struct dma_ops_domain *dma_ops_domain_alloc(void)
 	if (protection_domain_init(&dma_dom->domain))
 		goto free_dma_dom;
 
-	dma_dom->domain.mode = PAGE_MODE_2_LEVEL;
+	dma_dom->domain.mode = PAGE_MODE_3_LEVEL;
 	dma_dom->domain.pt_root = (void *)get_zeroed_page(GFP_KERNEL);
 	dma_dom->domain.flags = PD_DMA_OPS_MASK;
 	if (!dma_dom->domain.pt_root)
@@ -2239,8 +2239,15 @@ static void update_device_table(struct protection_domain *domain)
 {
 	struct iommu_dev_data *dev_data;
 
-	list_for_each_entry(dev_data, &domain->dev_list, list)
+	list_for_each_entry(dev_data, &domain->dev_list, list) {
 		set_dte_entry(dev_data->devid, domain, dev_data->ats.enabled);
+
+		if (dev_data->devid == dev_data->alias)
+			continue;
+
+		/* There is an alias, update device table entry for it */
+		set_dte_entry(dev_data->alias, domain, dev_data->ats.enabled);
+	}
 }
 
 static void update_domain(struct protection_domain *domain)
