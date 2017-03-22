@@ -1,10 +1,27 @@
 #include <linux/sched.h>
+#include <linux/sched/task.h>
+#include <linux/sched/task_stack.h>
 #include <asm/ptrace.h>
 #include <asm/bitops.h>
 #include <asm/stacktrace.h>
 #include <asm/unwind.h>
 
 #define FRAME_HEADER_SIZE (sizeof(long) * 2)
+
+/*
+ * This disables KASAN checking when reading a value from another task's stack,
+ * since the other task could be running on another CPU and could have poisoned
+ * the stack in the meantime.
+ */
+#define READ_ONCE_TASK_STACK(task, x)			\
+({							\
+	unsigned long val;				\
+	if (task == current)				\
+		val = READ_ONCE(x);			\
+	else						\
+		val = READ_ONCE_NOCHECK(x);		\
+	val;						\
+})
 
 static void unwind_dump(struct unwind_state *state, unsigned long *sp)
 {
@@ -48,7 +65,8 @@ unsigned long unwind_get_return_address(struct unwind_state *state)
 	if (state->regs && user_mode(state->regs))
 		return 0;
 
-	addr = ftrace_graph_ret_addr(state->task, &state->graph_idx, *addr_p,
+	addr = READ_ONCE_TASK_STACK(state->task, *addr_p);
+	addr = ftrace_graph_ret_addr(state->task, &state->graph_idx, addr,
 				     addr_p);
 
 	return __kernel_text_address(addr) ? addr : 0;
@@ -64,19 +82,43 @@ static size_t regs_size(struct pt_regs *regs)
 	return sizeof(*regs);
 }
 
+#ifdef CONFIG_X86_32
+#define GCC_REALIGN_WORDS 3
+#else
+#define GCC_REALIGN_WORDS 1
+#endif
+
 static bool is_last_task_frame(struct unwind_state *state)
 {
-	unsigned long bp = (unsigned long)state->bp;
-	unsigned long regs = (unsigned long)task_pt_regs(state->task);
+	unsigned long *last_bp = (unsigned long *)task_pt_regs(state->task) - 2;
+	unsigned long *aligned_bp = last_bp - GCC_REALIGN_WORDS;
 
 	/*
 	 * We have to check for the last task frame at two different locations
 	 * because gcc can occasionally decide to realign the stack pointer and
-	 * change the offset of the stack frame by a word in the prologue of a
-	 * function called by head/entry code.
+	 * change the offset of the stack frame in the prologue of a function
+	 * called by head/entry code.  Examples:
+	 *
+	 * <start_secondary>:
+	 *      push   %edi
+	 *      lea    0x8(%esp),%edi
+	 *      and    $0xfffffff8,%esp
+	 *      pushl  -0x4(%edi)
+	 *      push   %ebp
+	 *      mov    %esp,%ebp
+	 *
+	 * <x86_64_start_kernel>:
+	 *      lea    0x8(%rsp),%r10
+	 *      and    $0xfffffffffffffff0,%rsp
+	 *      pushq  -0x8(%r10)
+	 *      push   %rbp
+	 *      mov    %rsp,%rbp
+	 *
+	 * Note that after aligning the stack, it pushes a duplicate copy of
+	 * the return address before pushing the frame pointer.
 	 */
-	return bp == regs - FRAME_HEADER_SIZE ||
-	       bp == regs - FRAME_HEADER_SIZE - sizeof(long);
+	return (state->bp == last_bp ||
+		(state->bp == aligned_bp && *(aligned_bp+1) == *(last_bp+1)));
 }
 
 /*
@@ -162,7 +204,7 @@ bool unwind_next_frame(struct unwind_state *state)
 	if (state->regs)
 		next_bp = (unsigned long *)state->regs->bp;
 	else
-		next_bp = (unsigned long *)*state->bp;
+		next_bp = (unsigned long *)READ_ONCE_TASK_STACK(state->task,*state->bp);
 
 	/* is the next frame pointer an encoded pointer to pt_regs? */
 	regs = decode_frame_pointer(next_bp);
@@ -207,6 +249,16 @@ bool unwind_next_frame(struct unwind_state *state)
 	return true;
 
 bad_address:
+	/*
+	 * When unwinding a non-current task, the task might actually be
+	 * running on another CPU, in which case it could be modifying its
+	 * stack while we're reading it.  This is generally not a problem and
+	 * can be ignored as long as the caller understands that unwinding
+	 * another task will not always succeed.
+	 */
+	if (state->task != current)
+		goto the_end;
+
 	if (state->regs) {
 		printk_deferred_once(KERN_WARNING
 			"WARNING: kernel stack regs at %p in %s:%d has bad 'bp' value %p\n",

@@ -7,7 +7,9 @@
 #include <linux/smp.h>
 #include <linux/init.h>
 #include <linux/notifier.h>
-#include <linux/sched.h>
+#include <linux/sched/signal.h>
+#include <linux/sched/hotplug.h>
+#include <linux/sched/task.h>
 #include <linux/unistd.h>
 #include <linux/cpu.h>
 #include <linux/oom.h>
@@ -764,7 +766,6 @@ static int __ref _cpu_down(unsigned int cpu, int tasks_frozen,
 {
 	struct cpuhp_cpu_state *st = per_cpu_ptr(&cpuhp_state, cpu);
 	int prev_state, ret = 0;
-	bool hasdied = false;
 
 	if (num_online_cpus() == 1)
 		return -EBUSY;
@@ -809,7 +810,6 @@ static int __ref _cpu_down(unsigned int cpu, int tasks_frozen,
 		cpuhp_kick_ap_work(cpu);
 	}
 
-	hasdied = prev_state != st->state && st->state == CPUHP_OFFLINE;
 out:
 	cpu_hotplug_done();
 	return ret;
@@ -1302,10 +1302,24 @@ static int cpuhp_cb_check(enum cpuhp_state state)
  */
 static int cpuhp_reserve_state(enum cpuhp_state state)
 {
-	enum cpuhp_state i;
+	enum cpuhp_state i, end;
+	struct cpuhp_step *step;
 
-	for (i = CPUHP_AP_ONLINE_DYN; i <= CPUHP_AP_ONLINE_DYN_END; i++) {
-		if (!cpuhp_ap_states[i].name)
+	switch (state) {
+	case CPUHP_AP_ONLINE_DYN:
+		step = cpuhp_ap_states + CPUHP_AP_ONLINE_DYN;
+		end = CPUHP_AP_ONLINE_DYN_END;
+		break;
+	case CPUHP_BP_PREPARE_DYN:
+		step = cpuhp_bp_states + CPUHP_BP_PREPARE_DYN;
+		end = CPUHP_BP_PREPARE_DYN_END;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	for (i = state; i <= end; i++, step++) {
+		if (!step->name)
 			return i;
 	}
 	WARN(1, "No more dynamic states available for CPU hotplug\n");
@@ -1321,26 +1335,21 @@ static int cpuhp_store_callbacks(enum cpuhp_state state, const char *name,
 	struct cpuhp_step *sp;
 	int ret = 0;
 
-	mutex_lock(&cpuhp_state_mutex);
-
-	if (state == CPUHP_AP_ONLINE_DYN) {
+	if (state == CPUHP_AP_ONLINE_DYN || state == CPUHP_BP_PREPARE_DYN) {
 		ret = cpuhp_reserve_state(state);
 		if (ret < 0)
-			goto out;
+			return ret;
 		state = ret;
 	}
 	sp = cpuhp_get_step(state);
-	if (name && sp->name) {
-		ret = -EBUSY;
-		goto out;
-	}
+	if (name && sp->name)
+		return -EBUSY;
+
 	sp->startup.single = startup;
 	sp->teardown.single = teardown;
 	sp->name = name;
 	sp->multi_instance = multi_instance;
 	INIT_HLIST_HEAD(&sp->list);
-out:
-	mutex_unlock(&cpuhp_state_mutex);
 	return ret;
 }
 
@@ -1414,6 +1423,7 @@ int __cpuhp_state_add_instance(enum cpuhp_state state, struct hlist_node *node,
 		return -EINVAL;
 
 	get_online_cpus();
+	mutex_lock(&cpuhp_state_mutex);
 
 	if (!invoke || !sp->startup.multi)
 		goto add_node;
@@ -1433,16 +1443,14 @@ int __cpuhp_state_add_instance(enum cpuhp_state state, struct hlist_node *node,
 		if (ret) {
 			if (sp->teardown.multi)
 				cpuhp_rollback_install(cpu, state, node);
-			goto err;
+			goto unlock;
 		}
 	}
 add_node:
 	ret = 0;
-	mutex_lock(&cpuhp_state_mutex);
 	hlist_add_head(node, &sp->list);
+unlock:
 	mutex_unlock(&cpuhp_state_mutex);
-
-err:
 	put_online_cpus();
 	return ret;
 }
@@ -1477,6 +1485,7 @@ int __cpuhp_setup_state(enum cpuhp_state state,
 		return -EINVAL;
 
 	get_online_cpus();
+	mutex_lock(&cpuhp_state_mutex);
 
 	ret = cpuhp_store_callbacks(state, name, startup, teardown,
 				    multi_instance);
@@ -1510,6 +1519,7 @@ int __cpuhp_setup_state(enum cpuhp_state state,
 		}
 	}
 out:
+	mutex_unlock(&cpuhp_state_mutex);
 	put_online_cpus();
 	/*
 	 * If the requested state is CPUHP_AP_ONLINE_DYN, return the
@@ -1533,6 +1543,8 @@ int __cpuhp_state_remove_instance(enum cpuhp_state state,
 		return -EINVAL;
 
 	get_online_cpus();
+	mutex_lock(&cpuhp_state_mutex);
+
 	if (!invoke || !cpuhp_get_teardown_cb(state))
 		goto remove;
 	/*
@@ -1549,7 +1561,6 @@ int __cpuhp_state_remove_instance(enum cpuhp_state state,
 	}
 
 remove:
-	mutex_lock(&cpuhp_state_mutex);
 	hlist_del(node);
 	mutex_unlock(&cpuhp_state_mutex);
 	put_online_cpus();
@@ -1557,6 +1568,7 @@ remove:
 	return 0;
 }
 EXPORT_SYMBOL_GPL(__cpuhp_state_remove_instance);
+
 /**
  * __cpuhp_remove_state - Remove the callbacks for an hotplug machine state
  * @state:	The state to remove
@@ -1575,6 +1587,7 @@ void __cpuhp_remove_state(enum cpuhp_state state, bool invoke)
 
 	get_online_cpus();
 
+	mutex_lock(&cpuhp_state_mutex);
 	if (sp->multi_instance) {
 		WARN(!hlist_empty(&sp->list),
 		     "Error: Removing state %d which has instances left.\n",
@@ -1599,6 +1612,7 @@ void __cpuhp_remove_state(enum cpuhp_state state, bool invoke)
 	}
 remove:
 	cpuhp_store_callbacks(state, NULL, NULL, NULL, false);
+	mutex_unlock(&cpuhp_state_mutex);
 	put_online_cpus();
 }
 EXPORT_SYMBOL(__cpuhp_remove_state);
