@@ -1259,6 +1259,8 @@ static void omap_iommu_remove_device(struct device *dev)
 	if (!dev->of_node || !arch_data)
 		return;
 
+	dev->archdata.iommu = NULL;
+
 	kfree(arch_data->name);
 	kfree(arch_data);
 }
