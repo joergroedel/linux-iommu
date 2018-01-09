@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Driver for STMicroelectronics STM32F7 I2C controller
  *
@@ -7,11 +8,11 @@
  * http://www.st.com/resource/en/reference_manual/dm00124865.pdf
  *
  * Copyright (C) M'boumba Cedric Madianga 2017
+ * Copyright (C) STMicroelectronics 2017
  * Author: M'boumba Cedric Madianga <cedric.madianga@gmail.com>
  *
  * This driver is based on i2c-stm32f4.c
  *
- * License terms:  GNU General Public License (GPL), version 2
  */
 #include <linux/clk.h>
 #include <linux/delay.h>
@@ -215,7 +216,7 @@ struct stm32f7_i2c_dev {
 	unsigned int msg_num;
 	unsigned int msg_id;
 	struct stm32f7_i2c_msg f7_msg;
-	struct stm32f7_i2c_setup *setup;
+	struct stm32f7_i2c_setup setup;
 	struct stm32f7_i2c_timings timing;
 };
 
@@ -265,7 +266,7 @@ static struct stm32f7_i2c_spec i2c_specs[] = {
 	},
 };
 
-struct stm32f7_i2c_setup stm32f7_setup = {
+static const struct stm32f7_i2c_setup stm32f7_setup = {
 	.rise_time = STM32F7_I2C_RISE_TIME_DEFAULT,
 	.fall_time = STM32F7_I2C_FALL_TIME_DEFAULT,
 	.dnf = STM32F7_I2C_DNF_DEFAULT,
@@ -537,7 +538,7 @@ static void stm32f7_i2c_hw_config(struct stm32f7_i2c_dev *i2c_dev)
 	writel_relaxed(timing, i2c_dev->base + STM32F7_I2C_TIMINGR);
 
 	/* Enable I2C */
-	if (i2c_dev->setup->analog_filter)
+	if (i2c_dev->setup.analog_filter)
 		stm32f7_i2c_clr_bits(i2c_dev->base + STM32F7_I2C_CR1,
 				     STM32F7_I2C_CR1_ANFOFF);
 	else
@@ -887,22 +888,19 @@ static int stm32f7_i2c_probe(struct platform_device *pdev)
 	}
 
 	setup = of_device_get_match_data(&pdev->dev);
-	i2c_dev->setup->rise_time = setup->rise_time;
-	i2c_dev->setup->fall_time = setup->fall_time;
-	i2c_dev->setup->dnf = setup->dnf;
-	i2c_dev->setup->analog_filter = setup->analog_filter;
+	i2c_dev->setup = *setup;
 
 	ret = device_property_read_u32(i2c_dev->dev, "i2c-scl-rising-time-ns",
 				       &rise_time);
 	if (!ret)
-		i2c_dev->setup->rise_time = rise_time;
+		i2c_dev->setup.rise_time = rise_time;
 
 	ret = device_property_read_u32(i2c_dev->dev, "i2c-scl-falling-time-ns",
 				       &fall_time);
 	if (!ret)
-		i2c_dev->setup->fall_time = fall_time;
+		i2c_dev->setup.fall_time = fall_time;
 
-	ret = stm32f7_i2c_setup_timing(i2c_dev, i2c_dev->setup);
+	ret = stm32f7_i2c_setup_timing(i2c_dev, &i2c_dev->setup);
 	if (ret)
 		goto clk_free;
 

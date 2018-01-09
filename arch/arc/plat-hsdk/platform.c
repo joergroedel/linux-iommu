@@ -38,6 +38,10 @@ static void __init hsdk_init_per_cpu(unsigned int cpu)
 #define CREG_PAE		(CREG_BASE + 0x180)
 #define CREG_PAE_UPDATE		(CREG_BASE + 0x194)
 
+#define SDIO_BASE		(ARC_PERIPHERAL_BASE + 0xA000)
+#define SDIO_UHS_REG_EXT	(SDIO_BASE + 0x108)
+#define SDIO_UHS_REG_EXT_DIV_2	(2 << 30)
+
 static void __init hsdk_init_early(void)
 {
 	/*
@@ -52,6 +56,12 @@ static void __init hsdk_init_early(void)
 
 	/* Really apply settings made above */
 	writel(1, (void __iomem *) CREG_PAE_UPDATE);
+
+	/*
+	 * Switch SDIO external ciu clock divider from default div-by-8 to
+	 * minimum possible div-by-2.
+	 */
+	iowrite32(SDIO_UHS_REG_EXT_DIV_2, (void __iomem *) SDIO_UHS_REG_EXT);
 }
 
 static const char *hsdk_compat[] __initconst = {
