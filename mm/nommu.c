@@ -364,10 +364,6 @@ void *vzalloc_node(unsigned long size, int node)
 }
 EXPORT_SYMBOL(vzalloc_node);
 
-#ifndef PAGE_KERNEL_EXEC
-# define PAGE_KERNEL_EXEC PAGE_KERNEL
-#endif
-
 /**
  *	vmalloc_exec  -  allocate virtually contiguous, executable memory
  *	@size:		allocation size
@@ -1145,6 +1141,8 @@ static int do_mmap_private(struct vm_area_struct *vma,
 		if (ret < len)
 			memset(base + ret, 0, len - ret);
 
+	} else {
+		vma_set_anonymous(vma);
 	}
 
 	return 0;

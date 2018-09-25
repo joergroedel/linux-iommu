@@ -293,6 +293,7 @@ static int __bprm_mm_init(struct linux_binprm *bprm)
 	bprm->vma = vma = vm_area_alloc(mm);
 	if (!vma)
 		return -ENOMEM;
+	vma_set_anonymous(vma);
 
 	if (down_write_killable(&mm->mmap_sem)) {
 		err = -EINTR;
@@ -1144,6 +1145,7 @@ static int de_thread(struct task_struct *tsk)
 		 */
 		tsk->pid = leader->pid;
 		change_pid(tsk, PIDTYPE_PID, task_pid(leader));
+		transfer_pid(leader, tsk, PIDTYPE_TGID);
 		transfer_pid(leader, tsk, PIDTYPE_PGID);
 		transfer_pid(leader, tsk, PIDTYPE_SID);
 

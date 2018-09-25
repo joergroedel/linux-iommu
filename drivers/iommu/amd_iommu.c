@@ -2610,7 +2610,7 @@ static void *alloc_coherent(struct device *dev, size_t size,
 			return NULL;
 
 		page = dma_alloc_from_contiguous(dev, size >> PAGE_SHIFT,
-						 get_order(size), flag);
+					get_order(size), flag & __GFP_NOWARN);
 		if (!page)
 			return NULL;
 	}
@@ -3182,7 +3182,6 @@ const struct iommu_ops amd_iommu_ops = {
 	.detach_dev = amd_iommu_detach_device,
 	.map = amd_iommu_map,
 	.unmap = amd_iommu_unmap,
-	.map_sg = default_iommu_map_sg,
 	.iova_to_phys = amd_iommu_iova_to_phys,
 	.add_device = amd_iommu_add_device,
 	.remove_device = amd_iommu_remove_device,
