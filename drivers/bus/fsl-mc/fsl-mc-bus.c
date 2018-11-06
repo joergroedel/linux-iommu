@@ -199,6 +199,10 @@ struct device_type fsl_mc_bus_dprtc_type = {
 	.name = "fsl_mc_bus_dprtc"
 };
 
+struct device_type fsl_mc_bus_dpseci_type = {
+	.name = "fsl_mc_bus_dpseci"
+};
+
 static struct device_type *fsl_mc_get_device_type(const char *type)
 {
 	static const struct {
@@ -214,6 +218,7 @@ static struct device_type *fsl_mc_get_device_type(const char *type)
 		{ &fsl_mc_bus_dpmcp_type, "dpmcp" },
 		{ &fsl_mc_bus_dpmac_type, "dpmac" },
 		{ &fsl_mc_bus_dprtc_type, "dprtc" },
+		{ &fsl_mc_bus_dpseci_type, "dpseci" },
 		{ NULL, NULL }
 	};
 	int i;
@@ -701,8 +706,8 @@ static int parse_mc_ranges(struct device *dev,
 	*ranges_start = of_get_property(mc_node, "ranges", &ranges_len);
 	if (!(*ranges_start) || !ranges_len) {
 		dev_warn(dev,
-			 "missing or empty ranges property for device tree node '%s'\n",
-			 mc_node->name);
+			 "missing or empty ranges property for device tree node '%pOFn'\n",
+			 mc_node);
 		return 0;
 	}
 
@@ -725,7 +730,7 @@ static int parse_mc_ranges(struct device *dev,
 
 	tuple_len = range_tuple_cell_count * sizeof(__be32);
 	if (ranges_len % tuple_len != 0) {
-		dev_err(dev, "malformed ranges property '%s'\n", mc_node->name);
+		dev_err(dev, "malformed ranges property '%pOFn'\n", mc_node);
 		return -EINVAL;
 	}
 

@@ -1,17 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * IOMMU API for ARM architected SMMUv3 implementations.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
  * Copyright (C) 2015 ARM Limited
  *
@@ -1382,15 +1371,11 @@ static irqreturn_t arm_smmu_combined_irq_handler(int irq, void *dev)
 }
 
 /* IO_PGTABLE API */
-static void __arm_smmu_tlb_sync(struct arm_smmu_device *smmu)
-{
-	arm_smmu_cmdq_issue_sync(smmu);
-}
-
 static void arm_smmu_tlb_sync(void *cookie)
 {
 	struct arm_smmu_domain *smmu_domain = cookie;
-	__arm_smmu_tlb_sync(smmu_domain->smmu);
+
+	arm_smmu_cmdq_issue_sync(smmu_domain->smmu);
 }
 
 static void arm_smmu_tlb_inv_context(void *cookie)
@@ -1415,7 +1400,7 @@ static void arm_smmu_tlb_inv_context(void *cookie)
 	 * to guarantee those are observed before the TLBI. Do be careful, 007.
 	 */
 	arm_smmu_cmdq_issue_cmd(smmu, &cmd);
-	__arm_smmu_tlb_sync(smmu);
+	arm_smmu_cmdq_issue_sync(smmu);
 }
 
 static void arm_smmu_tlb_inv_range_nosync(unsigned long iova, size_t size,
@@ -1804,7 +1789,7 @@ static void arm_smmu_iotlb_sync(struct iommu_domain *domain)
 	struct arm_smmu_device *smmu = to_smmu_domain(domain)->smmu;
 
 	if (smmu)
-		__arm_smmu_tlb_sync(smmu);
+		arm_smmu_cmdq_issue_sync(smmu);
 }
 
 static phys_addr_t
