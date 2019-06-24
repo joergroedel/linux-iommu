@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * A fairly generic DMA-API to IOMMU-API glue layer.
  *
@@ -226,8 +226,8 @@ resv_iova:
 		start = window->res->end - window->offset + 1;
 		/* If window is last entry */
 		if (window->node.next == &bridge->dma_ranges &&
-		    end != ~(dma_addr_t)0) {
-			end = ~(dma_addr_t)0;
+		    end != ~(phys_addr_t)0) {
+			end = ~(phys_addr_t)0;
 			goto resv_iova;
 		}
 	}
@@ -894,7 +894,7 @@ static void iommu_dma_unmap_sg(struct device *dev, struct scatterlist *sg,
 	struct scatterlist *tmp;
 	int i;
 
-	if (!(attrs & DMA_ATTR_SKIP_CPU_SYNC) == 0)
+	if (!(attrs & DMA_ATTR_SKIP_CPU_SYNC))
 		iommu_dma_sync_sg_for_cpu(dev, sg, nents, dir);
 
 	/*
