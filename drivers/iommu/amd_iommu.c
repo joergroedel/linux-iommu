@@ -1295,6 +1295,16 @@ static void domain_flush_complete(struct protection_domain *domain)
 	}
 }
 
+/* Flush the not present cache if it exists */
+static void domain_flush_np_cache(struct protection_domain *domain,
+		dma_addr_t iova, size_t size)
+{
+	if (unlikely(amd_iommu_np_cache)) {
+		domain_flush_pages(domain, iova, size);
+		domain_flush_complete(domain);
+	}
+}
+
 
 /*
  * This function flushes the DTEs for all devices in domain
@@ -2377,10 +2387,7 @@ static dma_addr_t __map_single(struct device *dev,
 	}
 	address += offset;
 
-	if (unlikely(amd_iommu_np_cache)) {
-		domain_flush_pages(&dma_dom->domain, address, size);
-		domain_flush_complete(&dma_dom->domain);
-	}
+	domain_flush_np_cache(&dma_dom->domain, address, size);
 
 out:
 	return address;
@@ -2558,6 +2565,9 @@ static int map_sg(struct device *dev, struct scatterlist *sglist,
 		s->dma_address += address + (s->offset & ~PAGE_MASK);
 		s->dma_length   = s->length;
 	}
+
+	if (s)
+		domain_flush_np_cache(domain, s->dma_address, s->dma_length);
 
 	return nelems;
 
@@ -3038,6 +3048,8 @@ static int amd_iommu_map(struct iommu_domain *dom, unsigned long iova,
 	mutex_lock(&domain->api_lock);
 	ret = iommu_map_page(domain, iova, paddr, page_size, prot, GFP_KERNEL);
 	mutex_unlock(&domain->api_lock);
+
+	domain_flush_np_cache(domain, iova, page_size);
 
 	return ret;
 }
