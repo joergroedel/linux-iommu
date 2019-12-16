@@ -212,6 +212,7 @@ config INTEL_IOMMU_SVM
 	bool "Support for Shared Virtual Memory with Intel IOMMU"
 	depends on INTEL_IOMMU && X86
 	select PCI_PASID
+	select PCI_PRI
 	select MMU_NOTIFIER
 	help
 	  Shared Virtual Memory (SVM) provides a facility for devices
@@ -472,7 +473,7 @@ config QCOM_IOMMU
 
 config HYPERV_IOMMU
 	bool "Hyper-V x2APIC IRQ Handling"
-	depends on HYPERV
+	depends on HYPERV && X86
 	select IOMMU_API
 	default HYPERV
 	help
