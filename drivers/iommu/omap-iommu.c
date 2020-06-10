@@ -1236,6 +1236,7 @@ static int omap_iommu_probe(struct platform_device *pdev)
 			goto out_group;
 
 		iommu_device_set_ops(&obj->iommu, &omap_iommu_ops);
+		iommu_device_set_fwnode(&obj->iommu, &of->fwnode);
 
 		err = iommu_device_register(&obj->iommu);
 		if (err)
@@ -1725,6 +1726,9 @@ static struct iommu_group *omap_iommu_device_group(struct device *dev)
 {
 	struct omap_iommu_arch_data *arch_data = dev->archdata.iommu;
 	struct iommu_group *group = ERR_PTR(-EINVAL);
+
+	if (!arch_data)
+		return ERR_PTR(-ENODEV);
 
 	if (arch_data->iommu_dev)
 		group = iommu_group_ref_get(arch_data->iommu_dev->group);
