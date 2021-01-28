@@ -894,19 +894,18 @@ int create_pipe_files(struct file **res, int flags)
 {
 	struct inode *inode = get_pipe_inode();
 	struct file *f;
+	int error;
 
 	if (!inode)
 		return -ENFILE;
 
 	if (flags & O_NOTIFICATION_PIPE) {
-#ifdef CONFIG_WATCH_QUEUE
-		if (watch_queue_init(inode->i_pipe) < 0) {
+		error = watch_queue_init(inode->i_pipe);
+		if (error) {
+			free_pipe_info(inode->i_pipe);
 			iput(inode);
-			return -ENOMEM;
+			return error;
 		}
-#else
-		return -ENOPKG;
-#endif
 	}
 
 	f = alloc_file_pseudo(inode, pipe_mnt, "",
@@ -1343,9 +1342,8 @@ out_revert_acct:
 }
 
 /*
- * After the inode slimming patch, i_pipe/i_bdev/i_cdev share the same
- * location, so checking ->i_pipe is not enough to verify that this is a
- * pipe.
+ * Note that i_pipe and i_cdev share the same location, so checking ->i_pipe is
+ * not enough to verify that this is a pipe.
  */
 struct pipe_inode_info *get_pipe_info(struct file *file, bool for_splice)
 {
