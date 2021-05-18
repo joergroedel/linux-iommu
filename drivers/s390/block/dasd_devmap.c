@@ -1772,12 +1772,13 @@ static const struct attribute_group ext_pool_attr_group = {
 	.attrs = ext_pool_attrs,
 };
 
-static const struct attribute_group *dasd_attr_groups[] = {
+const struct attribute_group *dasd_dev_groups[] = {
 	&dasd_attr_group,
 	&capacity_attr_group,
 	&ext_pool_attr_group,
 	NULL,
 };
+EXPORT_SYMBOL_GPL(dasd_dev_groups);
 
 /*
  * Return value of the specified feature.
@@ -1874,30 +1875,26 @@ void dasd_path_create_kobjects(struct dasd_device *device)
 }
 EXPORT_SYMBOL(dasd_path_create_kobjects);
 
-/*
- * As we keep kobjects for the lifetime of a device, this function must not be
- * called anywhere but in the context of offlining a device.
- */
-void dasd_path_remove_kobj(struct dasd_device *device, int chp)
+static void dasd_path_remove_kobj(struct dasd_device *device, int chp)
 {
 	if (device->path[chp].in_sysfs) {
 		kobject_put(&device->path[chp].kobj);
 		device->path[chp].in_sysfs = false;
 	}
 }
-EXPORT_SYMBOL(dasd_path_remove_kobj);
 
-int dasd_add_sysfs_files(struct ccw_device *cdev)
+/*
+ * As we keep kobjects for the lifetime of a device, this function must not be
+ * called anywhere but in the context of offlining a device.
+ */
+void dasd_path_remove_kobjects(struct dasd_device *device)
 {
-	return sysfs_create_groups(&cdev->dev.kobj, dasd_attr_groups);
-}
+	int i;
 
-void
-dasd_remove_sysfs_files(struct ccw_device *cdev)
-{
-	sysfs_remove_groups(&cdev->dev.kobj, dasd_attr_groups);
+	for (i = 0; i < 8; i++)
+		dasd_path_remove_kobj(device, i);
 }
-
+EXPORT_SYMBOL(dasd_path_remove_kobjects);
 
 int
 dasd_devmap_init(void)

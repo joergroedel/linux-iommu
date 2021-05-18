@@ -300,7 +300,7 @@ static int ena_xdp_xmit_frame(struct ena_ring *xdp_ring,
 
 	rc = ena_xdp_tx_map_frame(xdp_ring, tx_info, xdpf, &push_hdr, &push_len);
 	if (unlikely(rc))
-		goto error_drop_packet;
+		return rc;
 
 	ena_tx_ctx.ena_bufs = tx_info->bufs;
 	ena_tx_ctx.push_header = push_hdr;
@@ -330,8 +330,6 @@ static int ena_xdp_xmit_frame(struct ena_ring *xdp_ring,
 error_unmap_dma:
 	ena_unmap_tx_buff(xdp_ring, tx_info);
 	tx_info->xdpf = NULL;
-error_drop_packet:
-	xdp_return_frame(xdpf);
 	return rc;
 }
 
@@ -339,8 +337,8 @@ static int ena_xdp_xmit(struct net_device *dev, int n,
 			struct xdp_frame **frames, u32 flags)
 {
 	struct ena_adapter *adapter = netdev_priv(dev);
-	int qid, i, err, drops = 0;
 	struct ena_ring *xdp_ring;
+	int qid, i, nxmit = 0;
 
 	if (unlikely(flags & ~XDP_XMIT_FLAGS_MASK))
 		return -EINVAL;
@@ -360,12 +358,9 @@ static int ena_xdp_xmit(struct net_device *dev, int n,
 	spin_lock(&xdp_ring->xdp_tx_lock);
 
 	for (i = 0; i < n; i++) {
-		err = ena_xdp_xmit_frame(xdp_ring, dev, frames[i], 0);
-		/* The descriptor is freed by ena_xdp_xmit_frame in case
-		 * of an error.
-		 */
-		if (err)
-			drops++;
+		if (ena_xdp_xmit_frame(xdp_ring, dev, frames[i], 0))
+			break;
+		nxmit++;
 	}
 
 	/* Ring doorbell to make device aware of the packets */
@@ -378,7 +373,7 @@ static int ena_xdp_xmit(struct net_device *dev, int n,
 	spin_unlock(&xdp_ring->xdp_tx_lock);
 
 	/* Return number of packets sent */
-	return n - drops;
+	return nxmit;
 }
 
 static int ena_xdp_execute(struct ena_ring *rx_ring, struct xdp_buff *xdp)
@@ -404,6 +399,7 @@ static int ena_xdp_execute(struct ena_ring *rx_ring, struct xdp_buff *xdp)
 		if (unlikely(!xdpf)) {
 			trace_xdp_exception(rx_ring->netdev, xdp_prog, verdict);
 			xdp_stat = &rx_ring->rx_stats.xdp_aborted;
+			verdict = XDP_ABORTED;
 			break;
 		}
 
@@ -414,7 +410,9 @@ static int ena_xdp_execute(struct ena_ring *rx_ring, struct xdp_buff *xdp)
 		/* The XDP queues are shared between XDP_TX and XDP_REDIRECT */
 		spin_lock(&xdp_ring->xdp_tx_lock);
 
-		ena_xdp_xmit_frame(xdp_ring, rx_ring->netdev, xdpf, XDP_XMIT_FLUSH);
+		if (ena_xdp_xmit_frame(xdp_ring, rx_ring->netdev, xdpf,
+				       XDP_XMIT_FLUSH))
+			xdp_return_frame(xdpf);
 
 		spin_unlock(&xdp_ring->xdp_tx_lock);
 		xdp_stat = &rx_ring->rx_stats.xdp_tx;
@@ -424,7 +422,10 @@ static int ena_xdp_execute(struct ena_ring *rx_ring, struct xdp_buff *xdp)
 			xdp_stat = &rx_ring->rx_stats.xdp_redirect;
 			break;
 		}
-		fallthrough;
+		trace_xdp_exception(rx_ring->netdev, xdp_prog, verdict);
+		xdp_stat = &rx_ring->rx_stats.xdp_aborted;
+		verdict = XDP_ABORTED;
+		break;
 	case XDP_ABORTED:
 		trace_xdp_exception(rx_ring->netdev, xdp_prog, verdict);
 		xdp_stat = &rx_ring->rx_stats.xdp_aborted;
@@ -1585,10 +1586,9 @@ static int ena_xdp_handle_buff(struct ena_ring *rx_ring, struct xdp_buff *xdp)
 	int ret;
 
 	rx_info = &rx_ring->rx_buffer_info[rx_ring->ena_bufs[0].req_id];
-	xdp->data = page_address(rx_info->page) + rx_info->page_offset;
-	xdp_set_data_meta_invalid(xdp);
-	xdp->data_hard_start = page_address(rx_info->page);
-	xdp->data_end = xdp->data + rx_ring->ena_bufs[0].len;
+	xdp_prepare_buff(xdp, page_address(rx_info->page),
+			 rx_info->page_offset,
+			 rx_ring->ena_bufs[0].len, false);
 	/* If for some reason we received a bigger packet than
 	 * we expect, then we simply drop it
 	 */
@@ -1634,8 +1634,7 @@ static int ena_clean_rx_irq(struct ena_ring *rx_ring, struct napi_struct *napi,
 	netif_dbg(rx_ring->adapter, rx_status, rx_ring->netdev,
 		  "%s qid %d\n", __func__, rx_ring->qid);
 	res_budget = budget;
-	xdp.rxq = &rx_ring->xdp_rxq;
-	xdp.frame_sz = ENA_PAGE_SIZE;
+	xdp_init_buff(&xdp, ENA_PAGE_SIZE, &rx_ring->xdp_rxq);
 
 	do {
 		xdp_verdict = XDP_PASS;
@@ -3976,7 +3975,7 @@ static u32 ena_calc_max_io_queue_num(struct pci_dev *pdev,
 	max_num_io_queues = min_t(u32, max_num_io_queues, io_rx_num);
 	max_num_io_queues = min_t(u32, max_num_io_queues, io_tx_sq_num);
 	max_num_io_queues = min_t(u32, max_num_io_queues, io_tx_cq_num);
-	/* 1 IRQ for for mgmnt and 1 IRQs for each IO direction */
+	/* 1 IRQ for mgmnt and 1 IRQs for each IO direction */
 	max_num_io_queues = min_t(u32, max_num_io_queues, pci_msix_vec_count(pdev) - 1);
 	if (unlikely(!max_num_io_queues)) {
 		dev_err(&pdev->dev, "The device doesn't have io queues\n");

@@ -160,7 +160,7 @@ int siw_query_device(struct ib_device *base_dev, struct ib_device_attr *attr,
 	return 0;
 }
 
-int siw_query_port(struct ib_device *base_dev, u8 port,
+int siw_query_port(struct ib_device *base_dev, u32 port,
 		   struct ib_port_attr *attr)
 {
 	struct siw_device *sdev = to_siw_dev(base_dev);
@@ -194,7 +194,7 @@ int siw_query_port(struct ib_device *base_dev, u8 port,
 	return rv;
 }
 
-int siw_get_port_immutable(struct ib_device *base_dev, u8 port,
+int siw_get_port_immutable(struct ib_device *base_dev, u32 port,
 			   struct ib_port_immutable *port_immutable)
 {
 	struct ib_port_attr attr;
@@ -209,7 +209,7 @@ int siw_get_port_immutable(struct ib_device *base_dev, u8 port,
 	return 0;
 }
 
-int siw_query_gid(struct ib_device *base_dev, u8 port, int idx,
+int siw_query_gid(struct ib_device *base_dev, u32 port, int idx,
 		  union ib_gid *gid)
 {
 	struct siw_device *sdev = to_siw_dev(base_dev);
@@ -365,13 +365,23 @@ struct ib_qp *siw_create_qp(struct ib_pd *pd,
 	if (rv)
 		goto err_out;
 
+	num_sqe = attrs->cap.max_send_wr;
+	num_rqe = attrs->cap.max_recv_wr;
+
 	/* All queue indices are derived from modulo operations
 	 * on a free running 'get' (consumer) and 'put' (producer)
 	 * unsigned counter. Having queue sizes at power of two
 	 * avoids handling counter wrap around.
 	 */
-	num_sqe = roundup_pow_of_two(attrs->cap.max_send_wr);
-	num_rqe = roundup_pow_of_two(attrs->cap.max_recv_wr);
+	if (num_sqe)
+		num_sqe = roundup_pow_of_two(num_sqe);
+	else {
+		/* Zero sized SQ is not supported */
+		rv = -EINVAL;
+		goto err_out;
+	}
+	if (num_rqe)
+		num_rqe = roundup_pow_of_two(num_rqe);
 
 	if (udata)
 		qp->sendq = vmalloc_user(num_sqe * sizeof(struct siw_sqe));
@@ -379,7 +389,6 @@ struct ib_qp *siw_create_qp(struct ib_pd *pd,
 		qp->sendq = vzalloc(num_sqe * sizeof(struct siw_sqe));
 
 	if (qp->sendq == NULL) {
-		siw_dbg(base_dev, "SQ size %d alloc failed\n", num_sqe);
 		rv = -ENOMEM;
 		goto err_out_xa;
 	}
@@ -413,7 +422,6 @@ struct ib_qp *siw_create_qp(struct ib_pd *pd,
 			qp->recvq = vzalloc(num_rqe * sizeof(struct siw_rqe));
 
 		if (qp->recvq == NULL) {
-			siw_dbg(base_dev, "RQ size %d alloc failed\n", num_rqe);
 			rv = -ENOMEM;
 			goto err_out_xa;
 		}
@@ -966,9 +974,9 @@ int siw_post_receive(struct ib_qp *base_qp, const struct ib_recv_wr *wr,
 	unsigned long flags;
 	int rv = 0;
 
-	if (qp->srq) {
+	if (qp->srq || qp->attrs.rq_size == 0) {
 		*bad_wr = wr;
-		return -EOPNOTSUPP; /* what else from errno.h? */
+		return -EINVAL;
 	}
 	if (!rdma_is_kernel_res(&qp->base_qp.res)) {
 		siw_dbg_qp(qp, "no kernel post_recv for user mapped rq\n");
@@ -1840,7 +1848,7 @@ void siw_srq_event(struct siw_srq *srq, enum ib_event_type etype)
 	}
 }
 
-void siw_port_event(struct siw_device *sdev, u8 port, enum ib_event_type etype)
+void siw_port_event(struct siw_device *sdev, u32 port, enum ib_event_type etype)
 {
 	struct ib_event event;
 

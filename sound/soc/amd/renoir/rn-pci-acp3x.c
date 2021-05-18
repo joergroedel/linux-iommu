@@ -20,7 +20,7 @@ static int acp_power_gating;
 module_param(acp_power_gating, int, 0644);
 MODULE_PARM_DESC(acp_power_gating, "Enable acp power gating");
 
-/**
+/*
  * dmic_acpi_check = -1 - Use ACPI/DMI method to detect the DMIC hardware presence at runtime
  *                 =  0 - Skip the DMIC device creation and return probe failure
  *                 =  1 - Force DMIC support
@@ -165,10 +165,24 @@ static int rn_acp_deinit(void __iomem *acp_base)
 
 static const struct dmi_system_id rn_acp_quirk_table[] = {
 	{
-		/* Lenovo IdeaPad Flex 5 14ARE05, IdeaPad 5 15ARE05 */
+		/* Lenovo IdeaPad S340-14API */
 		.matches = {
 			DMI_EXACT_MATCH(DMI_BOARD_VENDOR, "LENOVO"),
-			DMI_EXACT_MATCH(DMI_BOARD_NAME, "LNVNB161216"),
+			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "81NB"),
+		}
+	},
+	{
+		/* Lenovo IdeaPad Flex 5 14ARE05 */
+		.matches = {
+			DMI_EXACT_MATCH(DMI_BOARD_VENDOR, "LENOVO"),
+			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "81X2"),
+		}
+	},
+	{
+		/* Lenovo IdeaPad 5 15ARE05 */
+		.matches = {
+			DMI_EXACT_MATCH(DMI_BOARD_VENDOR, "LENOVO"),
+			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "81YQ"),
 		}
 	},
 	{

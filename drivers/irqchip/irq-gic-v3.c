@@ -75,10 +75,10 @@ static DEFINE_STATIC_KEY_TRUE(supports_deactivate_key);
  * are presented to the GIC CPUIF as follow:
  *     (GIC_(R)DIST_PRI[irq] >> 1) | 0x80;
  *
- * If SCR_EL3.FIQ == 1, the values writen to/read from PMR and RPR at non-secure
+ * If SCR_EL3.FIQ == 1, the values written to/read from PMR and RPR at non-secure
  * EL1 are subject to a similar operation thus matching the priorities presented
  * from the (re)distributor when security is enabled. When SCR_EL3.FIQ == 0,
- * these values are unchanched by the GIC.
+ * these values are unchanged by the GIC.
  *
  * see GICv3/GICv4 Architecture Specification (IHI0069D):
  * - section 4.8.1 Non-secure accesses to register fields for Secure interrupt
@@ -648,6 +648,10 @@ static asmlinkage void __exception_irq_entry gic_handle_irq(struct pt_regs *regs
 
 	irqnr = gic_read_iar();
 
+	/* Check for special IDs first */
+	if ((irqnr >= 1020 && irqnr <= 1023))
+		return;
+
 	if (gic_supports_nmi() &&
 	    unlikely(gic_read_rpr() == GICD_INT_NMI_PRI)) {
 		gic_handle_nmi(irqnr, regs);
@@ -658,10 +662,6 @@ static asmlinkage void __exception_irq_entry gic_handle_irq(struct pt_regs *regs
 		gic_pmr_mask_irqs();
 		gic_arch_enable_irqs();
 	}
-
-	/* Check for special IDs first */
-	if ((irqnr >= 1020 && irqnr <= 1023))
-		return;
 
 	if (static_branch_likely(&supports_deactivate_key))
 		gic_write_eoir(irqnr);
@@ -1379,7 +1379,7 @@ static int gic_irq_domain_translate(struct irq_domain *d,
 
 		/*
 		 * Make it clear that broken DTs are... broken.
-		 * Partitionned PPIs are an unfortunate exception.
+		 * Partitioned PPIs are an unfortunate exception.
 		 */
 		WARN_ON(*type == IRQ_TYPE_NONE &&
 			fwspec->param[0] != GIC_IRQ_TYPE_PARTITION);

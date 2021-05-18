@@ -133,8 +133,9 @@ cifs_build_devname(char *nodename, const char *prepath)
  * Caller is responsible for freeing returned value if it is not error.
  */
 char *cifs_compose_mount_options(const char *sb_mountdata,
-				   const char *fullpath,
-				   const struct dfs_info3_param *ref)
+				 const char *fullpath,
+				 const struct dfs_info3_param *ref,
+				 char **devname)
 {
 	int rc;
 	char *name;
@@ -231,7 +232,10 @@ char *cifs_compose_mount_options(const char *sb_mountdata,
 	strcat(mountdata, "ip=");
 	strcat(mountdata, srvIP);
 
-	kfree(name);
+	if (devname)
+		*devname = name;
+	else
+		kfree(name);
 
 	/*cifs_dbg(FYI, "%s: parent mountdata: %s\n", __func__, sb_mountdata);*/
 	/*cifs_dbg(FYI, "%s: submount mountdata: %s\n", __func__, mountdata );*/
@@ -266,7 +270,7 @@ static struct vfsmount *cifs_dfs_do_mount(struct dentry *mntpt,
 	char *mountdata;
 	char *devname;
 
-	devname = kstrndup(fullpath, strlen(fullpath), GFP_KERNEL);
+	devname = kstrdup(fullpath, GFP_KERNEL);
 	if (!devname)
 		return ERR_PTR(-ENOMEM);
 
@@ -278,7 +282,7 @@ static struct vfsmount *cifs_dfs_do_mount(struct dentry *mntpt,
 
 	/* strip first '\' from fullpath */
 	mountdata = cifs_compose_mount_options(cifs_sb->ctx->mount_options,
-					       fullpath + 1, NULL);
+					       fullpath + 1, NULL, NULL);
 	if (IS_ERR(mountdata)) {
 		kfree(devname);
 		return (struct vfsmount *)mountdata;
@@ -298,6 +302,7 @@ static struct vfsmount *cifs_dfs_do_automount(struct dentry *mntpt)
 	struct cifs_sb_info *cifs_sb;
 	struct cifs_ses *ses;
 	struct cifs_tcon *tcon;
+	void *page;
 	char *full_path, *root_path;
 	unsigned int xid;
 	int rc;
@@ -320,10 +325,13 @@ static struct vfsmount *cifs_dfs_do_automount(struct dentry *mntpt)
 		goto cdda_exit;
 	}
 
+	page = alloc_dentry_path();
 	/* always use tree name prefix */
-	full_path = build_path_from_dentry_optional_prefix(mntpt, true);
-	if (full_path == NULL)
-		goto cdda_exit;
+	full_path = build_path_from_dentry_optional_prefix(mntpt, page, true);
+	if (IS_ERR(full_path)) {
+		mnt = ERR_CAST(full_path);
+		goto free_full_path;
+	}
 
 	convert_delimiter(full_path, '\\');
 
@@ -381,7 +389,7 @@ static struct vfsmount *cifs_dfs_do_automount(struct dentry *mntpt)
 free_root_path:
 	kfree(root_path);
 free_full_path:
-	kfree(full_path);
+	free_dentry_path(page);
 cdda_exit:
 	cifs_dbg(FYI, "leaving %s\n" , __func__);
 	return mnt;
