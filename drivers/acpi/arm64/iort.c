@@ -949,7 +949,7 @@ static void iort_named_component_init(struct device *dev,
 	if (nc->node_flags & ACPI_IORT_NC_STALL_SUPPORTED)
 		props[1] = PROPERTY_ENTRY_BOOL("dma-can-stall");
 
-	if (device_add_properties(dev, props))
+	if (device_create_managed_software_node(dev, props, NULL))
 		dev_warn(dev, "Could not add device properties\n");
 }
 
