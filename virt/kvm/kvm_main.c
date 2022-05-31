@@ -1560,7 +1560,7 @@ static int kvm_prepare_memory_region(struct kvm *kvm,
 	r = kvm_arch_prepare_memory_region(kvm, old, new, change);
 
 	/* Free the bitmap on failure if it was allocated above. */
-	if (r && new && new->dirty_bitmap && old && !old->dirty_bitmap)
+	if (r && new && new->dirty_bitmap && (!old || !old->dirty_bitmap))
 		kvm_destroy_dirty_bitmap(new);
 
 	return r;
@@ -4354,6 +4354,7 @@ static long kvm_vm_ioctl_check_extension_generic(struct kvm *kvm, long arg)
 		return 0;
 #endif
 	case KVM_CAP_BINARY_STATS_FD:
+	case KVM_CAP_SYSTEM_EVENT_DATA:
 		return 1;
 	default:
 		break;
