@@ -1162,7 +1162,7 @@ static const struct dev_pm_ops ipmmu_pm  = {
 static struct platform_driver ipmmu_driver = {
 	.driver = {
 		.name = "ipmmu-vmsa",
-		.of_match_table = of_match_ptr(ipmmu_of_ids),
+		.of_match_table = ipmmu_of_ids,
 		.pm = DEV_PM_OPS,
 	},
 	.probe = ipmmu_probe,
