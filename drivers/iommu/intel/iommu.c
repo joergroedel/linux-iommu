@@ -1385,7 +1385,7 @@ static void domain_update_iotlb(struct dmar_domain *domain)
  * check because it applies only to the built-in QAT devices and it doesn't
  * grant additional privileges.
  */
-#define BUGGY_QAT_DEVID_MASK 0x494c
+#define BUGGY_QAT_DEVID_MASK 0x4940
 static bool dev_needs_extra_dtlb_flush(struct pci_dev *pdev)
 {
 	if (pdev->vendor != PCI_VENDOR_ID_INTEL)
@@ -4459,14 +4459,20 @@ static bool intel_iommu_enforce_cache_coherency(struct iommu_domain *domain)
 
 static bool intel_iommu_capable(struct device *dev, enum iommu_cap cap)
 {
-	if (cap == IOMMU_CAP_CACHE_COHERENCY)
-		return true;
-	if (cap == IOMMU_CAP_INTR_REMAP)
-		return irq_remapping_enabled == 1;
-	if (cap == IOMMU_CAP_PRE_BOOT_PROTECTION)
-		return dmar_platform_optin();
+	struct device_domain_info *info = dev_iommu_priv_get(dev);
 
-	return false;
+	switch (cap) {
+	case IOMMU_CAP_CACHE_COHERENCY:
+		return true;
+	case IOMMU_CAP_INTR_REMAP:
+		return irq_remapping_enabled == 1;
+	case IOMMU_CAP_PRE_BOOT_PROTECTION:
+		return dmar_platform_optin();
+	case IOMMU_CAP_ENFORCE_CACHE_COHERENCY:
+		return ecap_sc_support(info->iommu->ecap);
+	default:
+		return false;
+	}
 }
 
 static struct iommu_device *intel_iommu_probe_device(struct device *dev)
