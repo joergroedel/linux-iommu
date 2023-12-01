@@ -844,8 +844,8 @@ xfs_init_new_inode(
 	ASSERT(ip->i_nblocks == 0);
 
 	tv = inode_set_ctime_current(inode);
-	inode->i_mtime = tv;
-	inode->i_atime = tv;
+	inode_set_mtime_to_ts(inode, tv);
+	inode_set_atime_to_ts(inode, tv);
 
 	ip->i_extsize = 0;
 	ip->i_diflags = 0;
@@ -918,6 +918,13 @@ xfs_droplink(
 	xfs_trans_t *tp,
 	xfs_inode_t *ip)
 {
+	if (VFS_I(ip)->i_nlink == 0) {
+		xfs_alert(ip->i_mount,
+			  "%s: Attempt to drop inode (%llu) with nlink zero.",
+			  __func__, ip->i_ino);
+		return -EFSCORRUPTED;
+	}
+
 	xfs_trans_ichgtime(tp, ip, XFS_ICHGTIME_CHG);
 
 	drop_nlink(VFS_I(ip));
@@ -1743,6 +1750,14 @@ xfs_inactive(
 		truncate = 1;
 
 	if (xfs_iflags_test(ip, XFS_IQUOTAUNCHECKED)) {
+		/*
+		 * If this inode is being inactivated during a quotacheck and
+		 * has not yet been scanned by quotacheck, we /must/ remove
+		 * the dquots from the inode before inactivation changes the
+		 * block and inode counts.  Most probably this is a result of
+		 * reloading the incore iunlinked list to purge unrecovered
+		 * unlinked inodes.
+		 */
 		xfs_qm_dqdetach(ip);
 	} else {
 		error = xfs_qm_dqattach(ip);
@@ -3613,6 +3628,23 @@ xfs_iunlock2_io_mmap(
 		inode_unlock(VFS_I(ip1));
 }
 
+/* Drop the MMAPLOCK and the IOLOCK after a remap completes. */
+void
+xfs_iunlock2_remapping(
+	struct xfs_inode	*ip1,
+	struct xfs_inode	*ip2)
+{
+	xfs_iflags_clear(ip1, XFS_IREMAPPING);
+
+	if (ip1 != ip2)
+		xfs_iunlock(ip1, XFS_MMAPLOCK_SHARED);
+	xfs_iunlock(ip2, XFS_MMAPLOCK_EXCL);
+
+	if (ip1 != ip2)
+		inode_unlock_shared(VFS_I(ip1));
+	inode_unlock(VFS_I(ip2));
+}
+
 /*
  * Reload the incore inode list for this inode.  Caller should ensure that
  * the link count cannot change, either by taking ILOCK_SHARED or otherwise
@@ -3641,6 +3673,16 @@ xfs_inode_reload_unlinked_bucket(
 	if (error)
 		return error;
 
+	/*
+	 * We've taken ILOCK_SHARED and the AGI buffer lock to stabilize the
+	 * incore unlinked list pointers for this inode.  Check once more to
+	 * see if we raced with anyone else to reload the unlinked list.
+	 */
+	if (!xfs_inode_unlinked_incomplete(ip)) {
+		foundit = true;
+		goto out_agibp;
+	}
+
 	bucket = agino % XFS_AGI_UNLINKED_BUCKETS;
 	agi = agibp->b_addr;
 
@@ -3655,25 +3697,27 @@ xfs_inode_reload_unlinked_bucket(
 	while (next_agino != NULLAGINO) {
 		struct xfs_inode	*next_ip = NULL;
 
+		/* Found this caller's inode, set its backlink. */
 		if (next_agino == agino) {
-			/* Found this inode, set its backlink. */
 			next_ip = ip;
 			next_ip->i_prev_unlinked = prev_agino;
 			foundit = true;
+			goto next_inode;
 		}
-		if (!next_ip) {
-			/* Inode already in memory. */
-			next_ip = xfs_iunlink_lookup(pag, next_agino);
-		}
-		if (!next_ip) {
-			/* Inode not in memory, reload. */
-			error = xfs_iunlink_reload_next(tp, agibp, prev_agino,
-					next_agino);
-			if (error)
-				break;
 
-			next_ip = xfs_iunlink_lookup(pag, next_agino);
-		}
+		/* Try in-memory lookup first. */
+		next_ip = xfs_iunlink_lookup(pag, next_agino);
+		if (next_ip)
+			goto next_inode;
+
+		/* Inode not in memory, try reloading it. */
+		error = xfs_iunlink_reload_next(tp, agibp, prev_agino,
+				next_agino);
+		if (error)
+			break;
+
+		/* Grab the reloaded inode. */
+		next_ip = xfs_iunlink_lookup(pag, next_agino);
 		if (!next_ip) {
 			/* No incore inode at all?  We reloaded it... */
 			ASSERT(next_ip != NULL);
@@ -3681,10 +3725,12 @@ xfs_inode_reload_unlinked_bucket(
 			break;
 		}
 
+next_inode:
 		prev_agino = next_agino;
 		next_agino = next_ip->i_next_unlinked;
 	}
 
+out_agibp:
 	xfs_trans_brelse(tp, agibp);
 	/* Should have found this inode somewhere in the iunlinked bucket. */
 	if (!error && !foundit)
