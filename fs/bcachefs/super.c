@@ -288,7 +288,12 @@ static void __bch2_fs_read_only(struct bch_fs *c)
 	if (test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags) &&
 	    !test_bit(BCH_FS_emergency_ro, &c->flags))
 		set_bit(BCH_FS_clean_shutdown, &c->flags);
+
 	bch2_fs_journal_stop(&c->journal);
+
+	bch_info(c, "%sshutdown complete, journal seq %llu",
+		 test_bit(BCH_FS_clean_shutdown, &c->flags) ? "" : "un",
+		 c->journal.seq_ondisk);
 
 	/*
 	 * After stopping journal:
@@ -539,6 +544,7 @@ static void __bch2_fs_free(struct bch_fs *c)
 
 	bch2_find_btree_nodes_exit(&c->found_btree_nodes);
 	bch2_free_pending_node_rewrites(c);
+	bch2_fs_allocator_background_exit(c);
 	bch2_fs_sb_errors_exit(c);
 	bch2_fs_counters_exit(c);
 	bch2_fs_snapshots_exit(c);
@@ -1953,6 +1959,13 @@ int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 		goto err;
 	}
 
+	if (nbuckets > BCH_MEMBER_NBUCKETS_MAX) {
+		bch_err(ca, "New device size too big (%llu greater than max %u)",
+			nbuckets, BCH_MEMBER_NBUCKETS_MAX);
+		ret = -BCH_ERR_device_size_too_big;
+		goto err;
+	}
+
 	if (bch2_dev_is_online(ca) &&
 	    get_capacity(ca->disk_sb.bdev->bd_disk) <
 	    ca->mi.bucket_size * nbuckets) {
@@ -1998,13 +2011,9 @@ err:
 /* return with ref on ca->ref: */
 struct bch_dev *bch2_dev_lookup(struct bch_fs *c, const char *name)
 {
-	rcu_read_lock();
-	for_each_member_device_rcu(c, ca, NULL)
-		if (!strcmp(name, ca->name)) {
-			rcu_read_unlock();
+	for_each_member_device(c, ca)
+		if (!strcmp(name, ca->name))
 			return ca;
-		}
-	rcu_read_unlock();
 	return ERR_PTR(-BCH_ERR_ENOENT_dev_not_found);
 }
 
