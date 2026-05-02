@@ -137,7 +137,7 @@ static const struct lm75_params device_params[] = {
 	},
 	[as6200] = {
 		.config_reg_16bits = true,
-		.set_mask = 0x94C0,	/* 8 sample/s, 4 CF, positive polarity */
+		.set_mask = 0xC010,	/* 8 sample/s, 4 CF */
 		.default_resolution = 12,
 		.default_sample_time = 125,
 		.num_sample_times = 4,
@@ -286,8 +286,8 @@ static const struct lm75_params device_params[] = {
 	},
 	[tmp112] = {
 		.config_reg_16bits = true,
-		.set_mask = 0x60C0,	/* 12-bit mode, 8 samples / second */
-		.clr_mask = 1 << 15,	/* no one-shot mode*/
+		.set_mask = 0xC060,	/* 12-bit mode, 8 samples / second */
+		.clr_mask = 1 << 7,	/* no one-shot mode*/
 		.default_resolution = 12,
 		.default_sample_time = 125,
 		.num_sample_times = 4,
@@ -416,7 +416,7 @@ static int lm75_read(struct device *dev, enum hwmon_sensor_types type,
 			switch (data->kind) {
 			case as6200:
 			case tmp112:
-				*val = (regval >> 13) & 0x1;
+				*val = !!(regval & BIT(13)) == !!(regval & BIT(2));
 				break;
 			default:
 				return -EINVAL;
