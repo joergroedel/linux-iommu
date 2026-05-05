@@ -209,11 +209,18 @@ static struct psp_dev_caps nsim_psp_caps = {
 	.assoc_drv_spc = sizeof(void *),
 };
 
-void nsim_psp_uninit(struct netdevsim *ns)
+static void __nsim_psp_uninit(struct netdevsim *ns)
 {
 	if (!IS_ERR(ns->psp.dev))
 		psp_dev_unregister(ns->psp.dev);
 	WARN_ON(ns->psp.assoc_cnt);
+}
+
+void nsim_psp_uninit(struct netdevsim *ns)
+{
+	debugfs_remove(ns->psp.rereg);
+	mutex_destroy(&ns->psp.rereg_lock);
+	__nsim_psp_uninit(ns);
 }
 
 static ssize_t
@@ -223,11 +230,13 @@ nsim_psp_rereg_write(struct file *file, const char __user *data, size_t count,
 	struct netdevsim *ns = file->private_data;
 	int err;
 
-	nsim_psp_uninit(ns);
+	mutex_lock(&ns->psp.rereg_lock);
+	__nsim_psp_uninit(ns);
 
 	ns->psp.dev = psp_dev_create(ns->netdev, &nsim_psp_ops,
 				     &nsim_psp_caps, ns);
 	err = PTR_ERR_OR_ZERO(ns->psp.dev);
+	mutex_unlock(&ns->psp.rereg_lock);
 	return err ?: count;
 }
 
@@ -249,6 +258,8 @@ int nsim_psp_init(struct netdevsim *ns)
 	if (err)
 		return err;
 
-	debugfs_create_file("psp_rereg", 0200, ddir, ns, &nsim_psp_rereg_fops);
+	mutex_init(&ns->psp.rereg_lock);
+	ns->psp.rereg = debugfs_create_file("psp_rereg", 0200, ddir, ns,
+					    &nsim_psp_rereg_fops);
 	return 0;
 }
