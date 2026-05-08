@@ -2411,8 +2411,14 @@ static void ublk_reset_ch_dev(struct ublk_device *ub)
 {
 	int i;
 
-	for (i = 0; i < ub->dev_info.nr_hw_queues; i++)
-		ublk_queue_reinit(ub, ublk_get_queue(ub, i));
+	for (i = 0; i < ub->dev_info.nr_hw_queues; i++) {
+		struct ublk_queue *ubq = ublk_get_queue(ub, i);
+
+		/* Sync with ublk_cancel_cmd() */
+		spin_lock(&ubq->cancel_lock);
+		ublk_queue_reinit(ub, ubq);
+		spin_unlock(&ubq->cancel_lock);
+	}
 
 	/* set to NULL, otherwise new tasks cannot mmap io_cmd_buf */
 	ub->mm = NULL;
@@ -2753,6 +2759,7 @@ static void ublk_cancel_cmd(struct ublk_queue *ubq, unsigned tag,
 {
 	struct ublk_io *io = &ubq->ios[tag];
 	struct ublk_device *ub = ubq->dev;
+	struct io_uring_cmd *cmd = NULL;
 	struct request *req;
 	bool done;
 
@@ -2775,12 +2782,15 @@ static void ublk_cancel_cmd(struct ublk_queue *ubq, unsigned tag,
 
 	spin_lock(&ubq->cancel_lock);
 	done = !!(io->flags & UBLK_IO_FLAG_CANCELED);
-	if (!done)
+	if (!done) {
 		io->flags |= UBLK_IO_FLAG_CANCELED;
+		cmd = io->cmd;
+		io->cmd = NULL;
+	}
 	spin_unlock(&ubq->cancel_lock);
 
-	if (!done)
-		io_uring_cmd_done(io->cmd, UBLK_IO_RES_ABORT, issue_flags);
+	if (!done && cmd)
+		io_uring_cmd_done(cmd, UBLK_IO_RES_ABORT, issue_flags);
 }
 
 /*
